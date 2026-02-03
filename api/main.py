@@ -1103,13 +1103,13 @@ def convert_ifc_to_gltf(ifc_path: Path, gltf_path: Path) -> bool:
         resolved_ifc_path = ifc_path.resolve()
         ifc_file = ifcopenshell.open(str(resolved_ifc_path))
         
-        # Settings for geometry extraction - OPTIMIZED FOR SPEED
+        # Settings for geometry extraction - BALANCED: Speed + Accuracy
         settings = ifcopenshell.geom.settings()
         settings.set(settings.USE_WORLD_COORDS, True)  # Use world coordinates for consistency
-        settings.set(settings.WELD_VERTICES, False)  # Faster: skip vertex welding
-        settings.set(settings.DISABLE_OPENING_SUBTRACTIONS, True)  # Faster: skip holes/cuts
-        settings.set(settings.APPLY_DEFAULT_MATERIALS, False)  # Faster: skip material processing
-        # Note: SEW_SHELLS and APPLY_LAYERSETS may not be available in all IfcOpenShell versions
+        settings.set(settings.WELD_VERTICES, True)  # Keep vertex welding for better geometry
+        settings.set(settings.DISABLE_OPENING_SUBTRACTIONS, False)  # KEEP holes/cuts for accurate plates
+        settings.set(settings.APPLY_DEFAULT_MATERIALS, False)  # Skip material processing (we use type-based colors)
+        # Note: We keep opening subtractions for accurate geometry (bolt holes, cutouts, etc.)
         
         print(f"[GLTF] Using WORLD coordinates, preserving original IFC axis orientation")
         
