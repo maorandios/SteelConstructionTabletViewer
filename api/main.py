@@ -840,13 +840,13 @@ async def upload_ifc(file: UploadFile = File(...)):
         if file_path.exists() and report_path.exists() and gltf_path.exists():
             existing_size = file_path.stat().st_size
             if existing_size == len(content):
-                print(f"[UPLOAD-CACHE] ✅ CACHE HIT! File already processed: {safe_filename}")
+                print(f"[UPLOAD-CACHE] CACHE HIT! File already processed: {safe_filename}")
                 print(f"[UPLOAD-CACHE] File size: {existing_size} bytes (matches upload)")
                 print(f"[UPLOAD-CACHE] Loading cached report from: {report_path}")
                 print(f"[UPLOAD-CACHE] Using cached GLTF from: {gltf_path}")
                 use_cache = True
             else:
-                print(f"[UPLOAD-CACHE] ⚠️ File exists but size differs (old: {existing_size}, new: {len(content)})")
+                print(f"[UPLOAD-CACHE] File exists but size differs (old: {existing_size}, new: {len(content)})")
                 print(f"[UPLOAD-CACHE] Will reprocess...")
         else:
             missing = []
@@ -856,7 +856,7 @@ async def upload_ifc(file: UploadFile = File(...)):
                 missing.append("report")
             if not gltf_path.exists():
                 missing.append("GLTF")
-            print(f"[UPLOAD-CACHE] ❌ CACHE MISS - Missing: {', '.join(missing)}")
+            print(f"[UPLOAD-CACHE] CACHE MISS - Missing: {', '.join(missing)}")
         
         if use_cache:
             # Load cached report
@@ -872,7 +872,7 @@ async def upload_ifc(file: UploadFile = File(...)):
                 "from_cache": True
             }
             
-            print(f"[UPLOAD-CACHE] ✅ Returned cached data in {time.time() - upload_start:.2f}s")
+            print(f"[UPLOAD-CACHE] Returned cached data in {time.time() - upload_start:.2f}s")
             print(f"[UPLOAD] ===== UPLOAD COMPLETE (FROM CACHE) =====")
             return JSONResponse(response_data)
         
