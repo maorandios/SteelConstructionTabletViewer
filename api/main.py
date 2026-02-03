@@ -912,6 +912,45 @@ async def upload_ifc(file: UploadFile = File(...)):
                 traceback.print_exc()
                 raise
             
+            # Generate assembly mapping cache for faster subsequent loads
+            try:
+                mapping_cache_path = REPORTS_DIR / f"{safe_filename}.mapping.json"
+                print(f"[UPLOAD] Generating assembly mapping cache...")
+                mapping_start = time.time()
+                
+                ifc_file_for_mapping = ifcopenshell.open(str(file_path.resolve()))
+                mapping = {}
+                
+                for product in ifc_file_for_mapping.by_type("IfcProduct"):
+                    try:
+                        product_id = product.id()
+                        assembly_mark, assembly_id = get_assembly_info(product)
+                        element_type = product.is_a()
+                        
+                        mapping_entry = {
+                            "assembly_mark": assembly_mark,
+                            "assembly_id": assembly_id,
+                            "element_type": element_type
+                        }
+                        
+                        if element_type in {"IfcBeam", "IfcColumn", "IfcMember"}:
+                            profile_name = get_profile_name(product)
+                            mapping_entry["profile_name"] = profile_name
+                        
+                        if element_type == "IfcPlate":
+                            plate_thickness = get_plate_thickness(product)
+                            mapping_entry["plate_thickness"] = plate_thickness
+                        
+                        mapping[product_id] = mapping_entry
+                    except:
+                        continue
+                
+                with open(mapping_cache_path, "w", encoding='utf-8') as f:
+                    json.dump(mapping, f)
+                print(f"[UPLOAD-TIMING] Assembly mapping cached in {time.time() - mapping_start:.2f}s ({len(mapping)} products)")
+            except Exception as e:
+                print(f"[UPLOAD] Warning: Failed to generate mapping cache: {e}")
+            
             # Convert to glTF synchronously (for now, to catch errors)
             gltf_available = False
             conversion_error = None
@@ -1856,11 +1895,28 @@ async def inspect_entity(filename: str, entity_id: int):
 async def get_assembly_mapping(filename: str):
     """Get assembly mapping for a specific IFC file."""
     from urllib.parse import unquote
+    import time
+    start_time = time.time()
+    
     decoded_filename = unquote(filename)
     file_path = IFC_DIR / decoded_filename
     
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="IFC file not found")
+    
+    # ===== CACHE CHECK: Load from cached mapping if available =====
+    mapping_cache_path = REPORTS_DIR / f"{decoded_filename}.mapping.json"
+    if mapping_cache_path.exists():
+        print(f"[ASSEMBLY_MAPPING] CACHE HIT! Loading from: {mapping_cache_path}")
+        try:
+            with open(mapping_cache_path, "r", encoding='utf-8') as f:
+                mapping = json.load(f)
+            print(f"[ASSEMBLY_MAPPING] Loaded {len(mapping)} cached mappings in {time.time() - start_time:.3f}s")
+            return JSONResponse(mapping)
+        except Exception as e:
+            print(f"[ASSEMBLY_MAPPING] Cache read failed: {e}, will regenerate")
+    
+    print(f"[ASSEMBLY_MAPPING] CACHE MISS! Generating mapping for: {decoded_filename}")
     
     try:
         # Resolve path to absolute for Windows compatibility
@@ -1905,7 +1961,7 @@ async def get_assembly_mapping(filename: str):
                 else:
                     not_found_count += 1
                     # Collect a few samples for debugging
-                    if len(sample_not_found) < 5:
+                    if len(sample_not_found) < 3:
                         try:
                             psets = ifcopenshell.util.element.get_psets(product)
                             sample_not_found.append({
@@ -1925,6 +1981,15 @@ async def get_assembly_mapping(filename: str):
         if sample_not_found:
             print(f"[ASSEMBLY_MAPPING] Sample products without assembly marks: {sample_not_found}")
         
+        # ===== SAVE TO CACHE =====
+        try:
+            with open(mapping_cache_path, "w", encoding='utf-8') as f:
+                json.dump(mapping, f)
+            print(f"[ASSEMBLY_MAPPING] Cached {len(mapping)} mappings to: {mapping_cache_path}")
+        except Exception as e:
+            print(f"[ASSEMBLY_MAPPING] Warning: Failed to save cache: {e}")
+        
+        print(f"[ASSEMBLY_MAPPING] Total time: {time.time() - start_time:.3f}s")
         return JSONResponse(mapping)
     except Exception as e:
         import traceback
