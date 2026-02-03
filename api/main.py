@@ -1109,8 +1109,7 @@ def convert_ifc_to_gltf(ifc_path: Path, gltf_path: Path) -> bool:
         settings.set(settings.WELD_VERTICES, False)  # Faster: skip vertex welding
         settings.set(settings.DISABLE_OPENING_SUBTRACTIONS, True)  # Faster: skip holes/cuts
         settings.set(settings.APPLY_DEFAULT_MATERIALS, False)  # Faster: skip material processing
-        settings.set(settings.SEW_SHELLS, False)  # Faster: skip mesh sewing
-        settings.set(settings.APPLY_LAYERSETS, False)  # Faster: skip layer processing
+        # Note: SEW_SHELLS and APPLY_LAYERSETS may not be available in all IfcOpenShell versions
         
         print(f"[GLTF] Using WORLD coordinates, preserving original IFC axis orientation")
         
