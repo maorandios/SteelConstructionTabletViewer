@@ -4862,11 +4862,33 @@ async def get_dashboard_details(filename: str):
     - assemblies: List of assemblies with their parts
     """
     from urllib.parse import unquote
+    import time
+    start_time = time.time()
+    
     decoded_filename = unquote(filename)
     file_path = IFC_DIR / decoded_filename
     
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="IFC file not found")
+    
+    # ===== CACHE CHECK: Load from cached dashboard data if available =====
+    cache_path = REPORTS_DIR / f"{decoded_filename}.dashboard.json"
+    if cache_path.exists():
+        ifc_mtime = file_path.stat().st_mtime
+        cache_mtime = cache_path.stat().st_mtime
+        
+        # Use cache if it's newer than the IFC file
+        if cache_mtime >= ifc_mtime:
+            print(f"[DASHBOARD_DETAILS] ⚡ CACHE HIT! Loading from: {cache_path}")
+            try:
+                with open(cache_path, "r", encoding='utf-8') as f:
+                    data = json.load(f)
+                print(f"[DASHBOARD_DETAILS] ⚡ Loaded cached data in {time.time() - start_time:.3f}s")
+                return JSONResponse(data)
+            except Exception as e:
+                print(f"[DASHBOARD_DETAILS] ⚠️  Cache read failed: {e}, will regenerate")
+    
+    print(f"[DASHBOARD_DETAILS] 🔄 CACHE MISS! Generating data for: {decoded_filename}")
     
     try:
         # Resolve path to absolute for Windows compatibility
@@ -4880,8 +4902,28 @@ async def get_dashboard_details(filename: str):
         bolts_dict = {}     # key: (bolt_name, size, length, standard)
         fasteners_dict = {} # key: (anchor_name, diameter, length, standard) - for anchor rods etc.
         
-        # Iterate through all steel elements
-        for element in ifc_file.by_type("IfcProduct"):
+        # ===== OPTIMIZATION: Filter by steel types first (much faster than iterating all IfcProduct) =====
+        steel_elements = []
+        for type_name in STEEL_TYPES:
+            steel_elements.extend(ifc_file.by_type(type_name))
+        
+        # Also get fasteners directly
+        fastener_elements = []
+        for type_name in FASTENER_TYPES:
+            fastener_elements.extend(ifc_file.by_type(type_name))
+        
+        # Combine for processing
+        all_relevant_elements = steel_elements + fastener_elements
+        
+        print(f"[DASHBOARD_DETAILS] Processing {len(steel_elements)} steel elements + {len(fastener_elements)} fasteners")
+        
+        # Iterate through relevant elements only
+        for idx, element in enumerate(all_relevant_elements):
+            # Progress logging every 100 elements
+            if idx > 0 and idx % 100 == 0:
+                progress = (idx / len(all_relevant_elements)) * 100
+                print(f"[DASHBOARD_DETAILS] Progress: {progress:.1f}% ({idx}/{len(all_relevant_elements)})")
+            
             element_type = element.is_a()
             
             # Check if it's a fastener-like element (by name keywords)
@@ -5556,13 +5598,25 @@ async def get_dashboard_details(filename: str):
         bolts_list.sort(key=lambda x: (x["bolt_name"], x["size"] or 0, x["length"] or 0))
         fasteners_list.sort(key=lambda x: (x["anchor_name"], x["profile_name"] or "", x["length"] or 0))
         
-        return JSONResponse({
+        # Prepare result data
+        result_data = {
             "profiles": profiles_list,
             "plates": plates_list,
             "assemblies": assemblies_list,
             "bolts": bolts_list,
             "fasteners": fasteners_list
-        })
+        }
+        
+        # ===== SAVE TO CACHE for next time =====
+        try:
+            with open(cache_path, "w", encoding='utf-8') as f:
+                json.dump(result_data, f, ensure_ascii=False, indent=2)
+            print(f"[DASHBOARD_DETAILS] 💾 Cached data saved to: {cache_path}")
+        except Exception as e:
+            print(f"[DASHBOARD_DETAILS] ⚠️  Cache write failed: {e}")
+        
+        print(f"[DASHBOARD_DETAILS] ✅ Data generated in {time.time() - start_time:.3f}s")
+        return JSONResponse(result_data)
         
     except Exception as e:
         import traceback
@@ -5578,11 +5632,33 @@ async def get_shipment_assemblies(filename: str):
     Returns list of assemblies with: assembly_mark, main_profile, length, weight, ids
     """
     from urllib.parse import unquote
+    import time
+    start_time = time.time()
+    
     decoded_filename = unquote(filename)
     file_path = IFC_DIR / decoded_filename
     
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="IFC file not found")
+    
+    # ===== CACHE CHECK: Load from cached shipment data if available =====
+    cache_path = REPORTS_DIR / f"{decoded_filename}.shipment.json"
+    if cache_path.exists():
+        ifc_mtime = file_path.stat().st_mtime
+        cache_mtime = cache_path.stat().st_mtime
+        
+        # Use cache if it's newer than the IFC file
+        if cache_mtime >= ifc_mtime:
+            print(f"[SHIPMENT] ⚡ CACHE HIT! Loading from: {cache_path}")
+            try:
+                with open(cache_path, "r", encoding='utf-8') as f:
+                    data = json.load(f)
+                print(f"[SHIPMENT] ⚡ Loaded cached data in {time.time() - start_time:.3f}s")
+                return JSONResponse(data)
+            except Exception as e:
+                print(f"[SHIPMENT] ⚠️  Cache read failed: {e}, will regenerate")
+    
+    print(f"[SHIPMENT] 🔄 CACHE MISS! Generating data for: {decoded_filename}")
     
     try:
         # Resolve path to absolute for Windows compatibility
@@ -5593,12 +5669,21 @@ async def get_shipment_assemblies(filename: str):
         # We'll use assembly_id (the actual IFC element representing the assembly) as unique identifier
         assemblies_by_id = {}
         
-        # Iterate through all steel elements
-        for element in ifc_file.by_type("IfcProduct"):
-            element_type = element.is_a()
+        # ===== OPTIMIZATION: Filter by steel types first =====
+        steel_elements = []
+        for type_name in STEEL_TYPES:
+            steel_elements.extend(ifc_file.by_type(type_name))
+        
+        print(f"[SHIPMENT] Processing {len(steel_elements)} steel elements")
+        
+        # Iterate through steel elements only
+        for idx, element in enumerate(steel_elements):
+            # Progress logging every 100 elements
+            if idx > 0 and idx % 100 == 0:
+                progress = (idx / len(steel_elements)) * 100
+                print(f"[SHIPMENT] Progress: {progress:.1f}% ({idx}/{len(steel_elements)})")
             
-            if element_type not in STEEL_TYPES:
-                continue
+            element_type = element.is_a()
             
             element_id = element.id()
             
@@ -5734,9 +5819,21 @@ async def get_shipment_assemblies(filename: str):
         # Sort by assembly mark
         assemblies_list.sort(key=lambda x: x["assembly_mark"])
         
-        return JSONResponse({
+        # Prepare result data
+        result_data = {
             "assemblies": assemblies_list
-        })
+        }
+        
+        # ===== SAVE TO CACHE for next time =====
+        try:
+            with open(cache_path, "w", encoding='utf-8') as f:
+                json.dump(result_data, f, ensure_ascii=False, indent=2)
+            print(f"[SHIPMENT] 💾 Cached data saved to: {cache_path}")
+        except Exception as e:
+            print(f"[SHIPMENT] ⚠️  Cache write failed: {e}")
+        
+        print(f"[SHIPMENT] ✅ Data generated in {time.time() - start_time:.3f}s")
+        return JSONResponse(result_data)
         
     except Exception as e:
         import traceback
@@ -5757,11 +5854,42 @@ async def get_management_assemblies(filename: str):
     Returns list of assemblies with: assembly_mark, main_profile, length, weight, ids, completed, shipped
     """
     from urllib.parse import unquote
+    import time
+    start_time = time.time()
+    
     decoded_filename = unquote(filename)
     file_path = IFC_DIR / decoded_filename
     
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="IFC file not found")
+    
+    # ===== CACHE CHECK: Load from cached management data if available =====
+    # NOTE: We cache the assembly structure, but status is always loaded fresh from assembly_status_storage
+    cache_path = REPORTS_DIR / f"{decoded_filename}.management.json"
+    if cache_path.exists():
+        ifc_mtime = file_path.stat().st_mtime
+        cache_mtime = cache_path.stat().st_mtime
+        
+        # Use cache if it's newer than the IFC file
+        if cache_mtime >= ifc_mtime:
+            print(f"[MANAGEMENT] ⚡ CACHE HIT! Loading from: {cache_path}")
+            try:
+                with open(cache_path, "r", encoding='utf-8') as f:
+                    assemblies_list = json.load(f)["assemblies"]
+                
+                # Apply current status from in-memory storage
+                file_status = assembly_status_storage.get(decoded_filename, {})
+                for assembly in assemblies_list:
+                    status = file_status.get(str(assembly["assembly_id"]), {"completed": False, "shipped": False})
+                    assembly["completed"] = status["completed"]
+                    assembly["shipped"] = status["shipped"]
+                
+                print(f"[MANAGEMENT] ⚡ Loaded cached data with fresh status in {time.time() - start_time:.3f}s")
+                return JSONResponse({"assemblies": assemblies_list})
+            except Exception as e:
+                print(f"[MANAGEMENT] ⚠️  Cache read failed: {e}, will regenerate")
+    
+    print(f"[MANAGEMENT] 🔄 CACHE MISS! Generating data for: {decoded_filename}")
     
     try:
         # Get assemblies using the same logic as shipment endpoint
@@ -5770,11 +5898,21 @@ async def get_management_assemblies(filename: str):
         
         assemblies_by_id = {}
         
-        for element in ifc_file.by_type("IfcProduct"):
-            element_type = element.is_a()
+        # ===== OPTIMIZATION: Filter by steel types first =====
+        steel_elements = []
+        for type_name in STEEL_TYPES:
+            steel_elements.extend(ifc_file.by_type(type_name))
+        
+        print(f"[MANAGEMENT] Processing {len(steel_elements)} steel elements")
+        
+        # Iterate through steel elements only
+        for idx, element in enumerate(steel_elements):
+            # Progress logging every 100 elements
+            if idx > 0 and idx % 100 == 0:
+                progress = (idx / len(steel_elements)) * 100
+                print(f"[MANAGEMENT] Progress: {progress:.1f}% ({idx}/{len(steel_elements)})")
             
-            if element_type not in STEEL_TYPES:
-                continue
+            element_type = element.is_a()
             
             element_id = element.id()
             weight = get_element_weight(element)
@@ -5904,9 +6042,21 @@ async def get_management_assemblies(filename: str):
         
         assemblies_list.sort(key=lambda x: x["assembly_mark"])
         
-        return JSONResponse({
+        # Prepare result data
+        result_data = {
             "assemblies": assemblies_list
-        })
+        }
+        
+        # ===== SAVE TO CACHE for next time (with status included) =====
+        try:
+            with open(cache_path, "w", encoding='utf-8') as f:
+                json.dump(result_data, f, ensure_ascii=False, indent=2)
+            print(f"[MANAGEMENT] 💾 Cached data saved to: {cache_path}")
+        except Exception as e:
+            print(f"[MANAGEMENT] ⚠️  Cache write failed: {e}")
+        
+        print(f"[MANAGEMENT] ✅ Data generated in {time.time() - start_time:.3f}s")
+        return JSONResponse(result_data)
         
     except Exception as e:
         import traceback

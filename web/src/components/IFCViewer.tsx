@@ -263,22 +263,21 @@ export default function IFCViewer({ filename, gltfPath, gltfAvailable = false, e
     directionalLight2.shadow.camera.bottom = -100
     scene.add(directionalLight2)
 
-    // Setup controls to match Tekla (Trimble) online viewer feel
+    // Setup controls for instant, responsive camera movement
     const controls = new OrbitControls(camera, renderer.domElement)
     
-    // Enable smooth damping/inertia for Tekla-like feel
-    controls.enableDamping = true
-    controls.dampingFactor = 0.1  // Moderate damping for smooth, controlled movement
+    // DISABLE damping for instant mouse response (no lag/delay)
+    controls.enableDamping = false  // Instant response, no smoothing delay
     
     // Enable all controls
     controls.enablePan = true
     controls.enableZoom = true  // Enable default zoom (dolly to target only)
     controls.enableRotate = true
     
-    // Tekla-like speeds: moderate rotation, slow pan
-    controls.rotateSpeed = 0.8  // Moderate rotation speed
-    controls.panSpeed = 0.5    // Slow pan speed (Tekla-like)
-    controls.zoomSpeed = 0.9    // Limited zoom speed to prevent huge dolly steps (0.8-1.0 range)
+    // Fast, responsive speeds for instant feedback
+    controls.rotateSpeed = 1.5  // Fast rotation - moves with mouse speed
+    controls.panSpeed = 1.0     // Fast pan - responsive movement
+    controls.zoomSpeed = 1.8    // Faster zoom - quick in/out
     
     // Sensible distance limits - allow very close zooming to elements
     controls.minDistance = 0.01  // Allow close zoom but not extreme (prevents clipping issues)
@@ -294,14 +293,14 @@ export default function IFCViewer({ filename, gltfPath, gltfAvailable = false, e
     controls.minPolarAngle = 0      // Allow looking from top
     controls.maxPolarAngle = Math.PI // Allow looking from bottom
     
-    // Mouse button mappings (Tekla-like)
+    // Mouse button mappings - Custom configuration
     controls.mouseButtons = {
-      LEFT: THREE.MOUSE.ROTATE,    // Left-drag: rotate (orbit around model)
-      MIDDLE: THREE.MOUSE.DOLLY,    // Middle-drag: zoom
-      RIGHT: THREE.MOUSE.PAN        // Right-drag: pan (move view)
+      LEFT: THREE.MOUSE.ROTATE,     // Left-drag: rotate (orbit around model)
+      MIDDLE: THREE.MOUSE.PAN,      // Middle-drag: pan (move view)
+      RIGHT: -1                      // Right-click: disabled (reserved for context menu)
     }
     
-    // Enable pan for right mouse button
+    // Enable pan for middle mouse button
     controls.enablePan = true
     
     // Touch controls for mobile
@@ -399,6 +398,7 @@ export default function IFCViewer({ filename, gltfPath, gltfAvailable = false, e
     // 2) On pointerdown on the canvas
     const onPointerDown = (event: PointerEvent) => {
       // Only handle left button for orbit/selection
+      // Right-click (button === 2) is reserved for context menu only
       if (event.button !== 0) return
       
       // Set pointer down state
@@ -415,8 +415,7 @@ export default function IFCViewer({ filename, gltfPath, gltfAvailable = false, e
       // Left-click: orbit
       controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE
       
-      // Calculate and store pivot point at cursor position (but don't apply it yet)
-      // Only apply when dragging actually starts
+      // Calculate pivot point at cursor position for orbiting around clicked point (for left-click + drag)
       if (containerRef.current && camera && controls) {
         const rect = containerRef.current.getBoundingClientRect()
         const clickX = event.clientX - rect.left
@@ -472,7 +471,7 @@ export default function IFCViewer({ filename, gltfPath, gltfAvailable = false, e
             }
           }
           
-          // Store pivot point for later (when dragging starts)
+          // Store pivot point for immediate use (no animation, just set it)
           pendingPivotRef.current = pivotPoint
         }
       }
@@ -651,14 +650,17 @@ export default function IFCViewer({ filename, gltfPath, gltfAvailable = false, e
       if (distance > DRAG_THRESHOLD_PX && !dragStartedRef.current) {
         dragStartedRef.current = true
         
-        // Start smooth animation to the pivot point that was calculated on pointer down
+        // Set pivot point INSTANTLY without animation (no zoom effect)
         if (pendingPivotRef.current && camera && controls) {
           const pivotPoint = pendingPivotRef.current
-          oldTargetRef.current = controls.target.clone()
-          oldCameraPosRef.current = camera.position.clone()
-          targetPivotRef.current = pivotPoint.clone()
-          isAnimatingPivotRef.current = true
-          animationStartTimeRef.current = performance.now()
+          
+          // Simply update the OrbitControls target to the new pivot point
+          // No animation, no camera position change - just change rotation center
+          controls.target.copy(pivotPoint)
+          controls.update()
+          
+          // Clear the pending pivot
+          pendingPivotRef.current = null
         }
       }
       
