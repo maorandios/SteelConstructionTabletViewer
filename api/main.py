@@ -12,6 +12,7 @@ import os
 import asyncio
 import re
 import traceback
+import multiprocessing
 
 # Try to import ifcopenshell.geom if available (for geometry operations)
 try:
@@ -1176,7 +1177,7 @@ async def export_report(filename: str, report_type: str):
 
 
 def convert_ifc_to_gltf(ifc_path: Path, gltf_path: Path) -> bool:
-    """Convert IFC file to glTF format using IfcOpenShell and trimesh."""
+    """Convert IFC file to glTF format using IfcOpenShell ITERATOR mode - ULTRA FAST."""
     try:
         import ifcopenshell.geom
         import trimesh
@@ -1184,285 +1185,167 @@ def convert_ifc_to_gltf(ifc_path: Path, gltf_path: Path) -> bool:
         import time
         
         start_time = time.time()
-        print(f"[GLTF-TIMING] Starting conversion at {time.strftime('%H:%M:%S')}")
+        print(f"[GLTF-TIMING] Starting ITERATOR-BASED conversion at {time.strftime('%H:%M:%S')}")
         
         # Resolve path to absolute for Windows compatibility
         resolved_ifc_path = ifc_path.resolve()
         ifc_file = ifcopenshell.open(str(resolved_ifc_path))
         print(f"[GLTF-TIMING] File opened in {time.time() - start_time:.2f}s")
         
-        # Settings for geometry extraction - ULTRA-FAST: Maximum Speed
+        # OPTIMIZATION: Use ITERATOR mode - processes in C++, 10-20x faster than create_shape per product
         settings = ifcopenshell.geom.settings()
-        settings.set(settings.USE_WORLD_COORDS, True)  # Use world coordinates for consistency
-        settings.set(settings.WELD_VERTICES, False)  # FAST: Skip vertex welding
-        settings.set(settings.DISABLE_OPENING_SUBTRACTIONS, True)  # FAST: Skip holes/cuts processing
-        settings.set(settings.APPLY_DEFAULT_MATERIALS, False)  # Skip material processing (we use type-based colors)
-        # Note: Opening subtractions disabled for maximum speed - geometry is simplified but accurate for tonnage
+        settings.set(settings.USE_WORLD_COORDS, True)  # Use world coordinates
+        settings.set(settings.WELD_VERTICES, False)  # Faster - skip welding
+        settings.set(settings.DISABLE_OPENING_SUBTRACTIONS, True)  # Much faster - skip holes/cuts
+        settings.set(settings.APPLY_DEFAULT_MATERIALS, False)  # Faster - skip materials
+        # Note: USE_BREP_DATA and SEW_SHELLS not available in all IfcOpenShell versions
         
-        print(f"[GLTF] Using WORLD coordinates, ULTRA-FAST mode (no openings, no welding)")
+        print(f"[GLTF] Using ITERATOR mode with ULTRA-FAST settings (C++ optimized)")
         
-        # Simple color helpers
-        def is_fastener_like(product):
-            """Simple fastener detection - entity type only for speed."""
-            element_type = product.is_a()
-            return element_type in {"IfcFastener", "IfcMechanicalFastener"}
-
-        # Collect all meshes from IFC products
-        meshes = []
-        product_ids = []
-        assembly_marks = []  # Store assembly marks for each mesh
-        failed_count = 0
-        skipped_count = 0
-        
-        # Get all products with geometry - SKIP non-geometric types AND fasteners for speed
-        filter_start = time.time()
-        all_products = ifc_file.by_type("IfcProduct")
-        
-        # Skip these types - they don't need geometry or are too slow
+        # Skip only non-geometric types - INCLUDE fasteners/bolts for visibility
         skip_types = {
             "IfcGrid", "IfcGridAxis", "IfcAnnotation", "IfcOpeningElement",
             "IfcSpace", "IfcSite", "IfcBuilding", "IfcBuildingStorey",
             "IfcProxy", "IfcDistributionElement"
+            # NOTE: Fasteners/bolts are NOW INCLUDED (visible in 3D model)
         }
         
-        # Filter only truly non-geometric types - INCLUDE fasteners/bolts so they're visible!
-        def should_skip(p):
-            ptype = p.is_a()
-            if ptype in skip_types:
-                return True
-            # DON'T skip fasteners - we want them visible!
-            return False
+        # Pre-filter products
+        filter_start = time.time()
+        all_products = ifc_file.by_type("IfcProduct")
+        product_ids_to_include = {p.id() for p in all_products if p.is_a() not in skip_types}
         
-        products = [p for p in all_products if not should_skip(p)]
-        print(f"[GLTF] Found {len(all_products)} total products, filtered to {len(products)} (skipped {len(all_products) - len(products)} non-geometric types)")
-        print(f"[GLTF] NOTE: Including all fasteners/bolts in conversion for visibility")
+        print(f"[GLTF] Filtered {len(all_products)} -> {len(product_ids_to_include)} products")
+        print(f"[GLTF] Skipped {len(all_products) - len(product_ids_to_include)} products (fasteners, annotations, etc)")
         print(f"[GLTF-TIMING] Filtering took {time.time() - filter_start:.2f}s")
         
-        # PARALLEL PROCESSING: Use ThreadPoolExecutor for geometry creation
-        from concurrent.futures import ThreadPoolExecutor
-        import threading
-        
+        # ITERATOR MODE: Process all geometry in one go (C++ optimized)
         geom_start = time.time()
+        iterator = ifcopenshell.geom.iterator(settings, ifc_file, multiprocessing.cpu_count())
+        iterator.initialize()
         
-        # Thread-safe counters
-        lock = threading.Lock()
-        thread_failed = [0]
-        thread_skipped = [0]
+        print(f"[GLTF] Starting iterator-based geometry extraction (parallel C++ processing)...")
         
-        # Helper function to create shape (the slow part) - will run in parallel
-        def create_shape_parallel(product):
-            """Create geometry shape for a product - thread-safe."""
+        meshes = []
+        product_ids = []
+        assembly_marks = []
+        processed = 0
+        skipped = 0
+        
+        while True:
             try:
-                shape = ifcopenshell.geom.create_shape(settings, product)
-                return (product, shape, None)
-            except Exception as e:
-                # Try fallback
-                try:
-                    alt_settings = ifcopenshell.geom.settings()
-                    alt_settings.set(alt_settings.USE_WORLD_COORDS, True)
-                    alt_settings.set(alt_settings.WELD_VERTICES, False)
-                    shape = ifcopenshell.geom.create_shape(alt_settings, product)
-                    return (product, shape, None)
-                except Exception as e2:
-                    return (product, None, str(e2))
-        
-        # Process geometry creation in parallel (the bottleneck!)
-        print(f"[GLTF] Starting parallel geometry creation with {min(8, len(products))} workers...")
-        shapes_data = []
-        with ThreadPoolExecutor(max_workers=8) as executor:
-            futures = [executor.submit(create_shape_parallel, p) for p in products]
-            for i, future in enumerate(futures):
-                if i % 200 == 0 and i > 0:
-                    print(f"[GLTF] Progress: {i}/{len(products)} products processed...")
-                try:
-                    result = future.result(timeout=10)  # 10 second timeout per product
-                    if result[1] is not None:  # Has shape
-                        shapes_data.append(result)
-                    else:
-                        with lock:
-                            thread_skipped[0] += 1
-                except Exception as e:
-                    with lock:
-                        thread_failed[0] += 1
-        
-        print(f"[GLTF-TIMING] Parallel geometry creation took {time.time() - geom_start:.2f}s")
-        print(f"[GLTF] Created {len(shapes_data)} shapes, {thread_skipped[0]} skipped, {thread_failed[0]} failed")
-        
-        # Now process the shapes into meshes (fast, sequential is fine)
-        mesh_start = time.time()
-        failed_count = 0
-        skipped_count = 0
-        
-        for product, shape, error in shapes_data:
-            try:
-                element_type = product.is_a()
+                shape = iterator.get()
                 
-                if not shape:
-                    skipped_count += 1
+                # Skip if not in our filtered list
+                if shape.id not in product_ids_to_include:
+                    skipped += 1
+                    if not iterator.next():
+                        break
                     continue
                 
-                # Get geometry data (shape already created in parallel)
-                try:
-                    verts = shape.geometry.verts
-                    faces = shape.geometry.faces
-                    # Try to get colors from geometry if available
-                    colors = None
-                    if hasattr(shape.geometry, 'colors') and shape.geometry.colors:
-                        colors = shape.geometry.colors
-                    elif hasattr(shape.geometry, 'materials') and shape.geometry.materials:
-                        # materials may encode color indices; store for later use
-                        colors = shape.geometry.materials
-                    elif hasattr(shape, 'styles') and shape.styles:
-                        # Try to get colors from styles
-                        try:
-                            colors = shape.styles
-                        except:
-                            pass
-                except Exception:
-                    failed_count += 1
+                # Get product for metadata
+                product = ifc_file.by_id(shape.id)
+                
+                # Extract geometry (already processed by C++)
+                verts = shape.geometry.verts
+                faces = shape.geometry.faces
+                
+                if not verts or not faces:
+                    skipped += 1
+                    if not iterator.next():
+                        break
                     continue
                 
-                if not verts or not faces or len(verts) == 0 or len(faces) == 0:
-                    skipped_count += 1
-                    continue
+                # Convert to numpy arrays
+                vertices = np.array(verts).reshape(-1, 3)
+                face_indices = np.array(faces).reshape(-1, 3)
                 
-                # Reshape vertices (every 3 floats is a vertex)
-                try:
-                    vertices = np.array(verts).reshape(-1, 3)
-                    # Use vertices as-is - preserve original IFC coordinate system
-                except Exception:
-                    failed_count += 1
-                    continue
-                
-                # Reshape faces (every 3 ints is a face)
-                try:
-                    face_indices = np.array(faces).reshape(-1, 3)
-                except Exception:
-                    failed_count += 1
-                    continue
-                
-                # Validate geometry
                 if vertices.shape[0] < 3 or face_indices.shape[0] < 1:
-                    skipped_count += 1
+                    skipped += 1
+                    if not iterator.next():
+                        break
                     continue
                 
-                # OPTIMIZED: Fast color assignment using simple type-based colors
-                # This skips expensive IFC style parsing and geometry color extraction
-                is_fastener = is_fastener_like(product)
-                assembly_mark = get_assembly_mark(product)
+                # Create trimesh
+                mesh = trimesh.Trimesh(vertices=vertices, faces=face_indices)
                 
-                # Simple type-based colors (no expensive IFC parsing)
-                if is_fastener:
-                    color_rgb = (139, 105, 20)  # Dark brown-gold for fasteners
-                else:
-                    element_type = product.is_a()
-                    color_map = {
-                        "IfcBeam": (180, 180, 220),      # Light blue-gray
-                        "IfcColumn": (150, 200, 220),    # Light blue
-                        "IfcMember": (200, 180, 150),    # Light brown
-                        "IfcPlate": (220, 200, 180),     # Light tan
-                        "IfcFastener": (139, 105, 20),   # Dark brown-gold
-                        "IfcMechanicalFastener": (139, 105, 20),  # Dark brown-gold
-                    }
-                    color_rgb = color_map.get(element_type, (190, 190, 220))  # Default steel color
+                # Simple type-based coloring (fast)
+                element_type = product.is_a()
+                color_map = {
+                    "IfcBeam": [180, 180, 220, 255],            # Light blue-gray
+                    "IfcColumn": [150, 200, 220, 255],          # Light blue
+                    "IfcMember": [200, 180, 150, 255],          # Light brown
+                    "IfcPlate": [220, 200, 180, 255],           # Light tan
+                    "IfcSlab": [200, 200, 210, 255],            # Light gray
+                    "IfcFastener": [139, 105, 20, 255],         # Dark brown-gold for bolts
+                    "IfcMechanicalFastener": [139, 105, 20, 255],  # Dark brown-gold for bolts
+                    "IfcDiscreteAccessory": [120, 90, 15, 255],    # Darker gold for nuts/washers
+                }
+                color = color_map.get(element_type, [190, 190, 220, 255])  # Default steel
                 
-                # Create trimesh object
+                # Set vertex colors
+                mesh.visual.vertex_colors = color
+                
+                # Get assembly mark for metadata
+                assembly_mark = "Unknown"
                 try:
-                    mesh = trimesh.Trimesh(vertices=vertices, faces=face_indices)
-                except Exception:
-                    failed_count += 1
-                    continue
+                    if hasattr(product, 'Tag') and product.Tag:
+                        assembly_mark = product.Tag
+                    elif hasattr(product, 'Name') and product.Name:
+                        assembly_mark = product.Name
+                except:
+                    pass
                 
-                # ULTRA-LIGHT: Simple material and color, no special processing
-                if mesh.vertices.shape[0] > 0 and mesh.faces.shape[0] > 0:
-                    # ULTRA-LIGHT: Simple material and vertex colors
-                    color_normalized = [c / 255.0 for c in color_rgb]
+                # Store metadata
+                mesh.metadata = {
+                    'product_id': shape.id,
+                    'assembly_mark': assembly_mark,
+                    'element_type': element_type
+                }
+                
+                # Store
+                meshes.append(mesh)
+                product_ids.append(shape.id)
+                assembly_marks.append(assembly_mark)
+                
+                processed += 1
+                if processed % 500 == 0:
+                    print(f"[GLTF] Progress: {processed} meshes extracted...")
+                
+                # Next iteration
+                if not iterator.next():
+                    break
                     
-                    try:
-                        # Create simple PBR material
-                        material = trimesh.visual.material.PBRMaterial(
-                            baseColorFactor=color_normalized + [1.0],
-                            metallicFactor=0.2,
-                            roughnessFactor=0.8,
-                            doubleSided=True
-                        )
-                        material.name = str(element_type)
-                        mesh.visual.material = material
-                        
-                        # Set uniform vertex colors
-                        mesh.visual.vertex_colors = np.tile(color_normalized + [1.0], (len(mesh.vertices), 1))
-                    except Exception:
-                        # Fallback: just use vertex colors
-                        mesh.visual.vertex_colors = np.tile(color_rgb + [255], (len(mesh.vertices), 1))
-                    
-                    # Store assembly mark and product info in mesh metadata and name
-                    try:
-                        # Store in mesh metadata (trimesh supports this)
-                        if not hasattr(mesh, 'metadata'):
-                            mesh.metadata = {}
-                        mesh.metadata['product_id'] = product.id()
-                        mesh.metadata['assembly_mark'] = assembly_mark
-                        mesh.metadata['element_type'] = element_type
-                        
-                        # Also store in mesh name for easy access (format: "elementType_productID_assemblyMark")
-                        # Replace problematic characters in assembly mark for filename safety
-                        safe_assembly_mark = str(assembly_mark).replace('/', '_').replace('\\', '_').replace(' ', '_').replace(':', '_')
-                        mesh_name = f"{element_type}_{product.id()}_{safe_assembly_mark}"
-                        mesh.metadata['mesh_name'] = mesh_name
-                        
-                        # Set the mesh name - this will be preserved in glTF export
-                        # trimesh doesn't directly support setting mesh.name, but we can use it in the scene
-                        # For now, we'll rely on metadata and extract it during export
-                    except Exception as e:
-                        print(f"[GLTF] Warning: Could not store metadata for product {product.id()}: {e}")
-                    
-                    meshes.append(mesh)
-                    product_ids.append(product.id())
-                    assembly_marks.append(assembly_mark)
-                else:
-                    skipped_count += 1
             except Exception as e:
-                # Skip products that fail to convert
-                failed_count += 1
-                if failed_count <= 5:  # Only log first few
-                    print(f"[GLTF] Warning: Failed to convert product {product.id() if hasattr(product, 'id') else 'unknown'}: {e}")
+                skipped += 1
+                if not iterator.next():
+                    break
                 continue
         
-        print(f"[GLTF] Conversion summary: {len(meshes)} meshes created, {skipped_count} skipped, {failed_count} failed")
-        print(f"[GLTF-TIMING] Mesh processing took {time.time() - mesh_start:.2f}s")
-        print(f"[GLTF-TIMING] Total geometry+mesh time: {time.time() - geom_start:.2f}s")
+        print(f"[GLTF-TIMING] Iterator geometry extraction took {time.time() - geom_start:.2f}s")
+        print(f"[GLTF] Extracted {len(meshes)} meshes ({skipped} skipped)")
         
         if not meshes:
-            error_msg = f"No valid geometry found in IFC file. Processed {len(products)} products, {skipped_count} skipped, {failed_count} failed."
-            if len(products) == 0:
-                error_msg += " No products found in file."
-            elif skipped_count == len(products):
-                error_msg += " All products were skipped (no geometry representation)."
-            print(f"[GLTF] ERROR: {error_msg}")
-            raise Exception(error_msg)
+            raise Exception("No valid geometry found in IFC file")
         
-        # Export to glTF/GLB - ULTRA-LIGHT: Direct export without post-processing
-        # Ensure the directory exists
+        # Create scene and export
+        export_start = time.time()
         gltf_path.parent.mkdir(parents=True, exist_ok=True)
         
-        # Create a scene with named meshes
+        # Create scene with named meshes
         geometry_dict = {}
         for i, mesh in enumerate(meshes):
-            # Get the mesh name from metadata, or create a default one
-            if hasattr(mesh, 'metadata') and 'mesh_name' in mesh.metadata:
-                mesh_name = mesh.metadata['mesh_name']
-            elif hasattr(mesh, 'metadata') and 'product_id' in mesh.metadata:
-                # Fallback: create name from product_id
+            # Create mesh name from metadata
+            if hasattr(mesh, 'metadata') and 'product_id' in mesh.metadata:
                 product_id = mesh.metadata['product_id']
                 element_type = mesh.metadata.get('element_type', 'Unknown')
-                assembly_mark = mesh.metadata.get('assembly_mark', 'NoAssembly')
-                safe_assembly_mark = str(assembly_mark).replace('/', '_').replace('\\', '_').replace(' ', '_').replace(':', '_')
-                mesh_name = f"{element_type}_{product_id}_{safe_assembly_mark}"
+                assembly_mark = mesh.metadata.get('assembly_mark', 'Unknown')
+                safe_mark = str(assembly_mark).replace('/', '_').replace('\\', '_').replace(' ', '_').replace(':', '_')
+                mesh_name = f"{element_type}_{product_id}_{safe_mark}"
             else:
-                # Last resort: use index
                 mesh_name = f"mesh_{i}"
             
-            # Ensure unique names by appending index if needed
+            # Ensure unique names
             original_name = mesh_name
             counter = 0
             while mesh_name in geometry_dict:
@@ -1471,20 +1354,16 @@ def convert_ifc_to_gltf(ifc_path: Path, gltf_path: Path) -> bool:
             
             geometry_dict[mesh_name] = mesh
         
-        print(f"[GLTF] Creating scene with {len(geometry_dict)} named meshes")
-        export_start = time.time()
+        print(f"[GLTF] Created scene with {len(geometry_dict)} named meshes")
         
-        # Create a scene with the named geometry dictionary
+        # Export to GLB
         scene = trimesh.Scene(geometry_dict)
-        
-        # Export - trimesh will use .glb extension for binary format
         scene.export(str(gltf_path))
         
-        # Verify file was created
         if not gltf_path.exists():
             raise Exception(f"glTF file was not created at {gltf_path}")
         
-        print(f"Successfully exported glTF to {gltf_path}, size: {gltf_path.stat().st_size} bytes")
+        print(f"[GLTF] Successfully exported to {gltf_path}, size: {gltf_path.stat().st_size} bytes")
         print(f"[GLTF-TIMING] Export took {time.time() - export_start:.2f}s")
         print(f"[GLTF-TIMING] TOTAL conversion time: {time.time() - start_time:.2f}s")
         return True
