@@ -1249,12 +1249,33 @@ def convert_ifc_to_gltf(ifc_path: Path, gltf_path: Path) -> bool:
         thread_failed = [0]
         thread_skipped = [0]
         
+        # Helper function to extract IFC color (fast, simple lookup)
+        def get_ifc_color(product):
+            """Extract color from IFC product styles - returns RGB tuple or None."""
+            try:
+                import ifcopenshell.util.style
+                style = ifcopenshell.util.style.get_style(product)
+                if style and hasattr(style, "Styles"):
+                    for rendering in style.Styles or []:
+                        if rendering.is_a('IfcSurfaceStyleRendering') and rendering.SurfaceColour:
+                            # IFC colors are in 0-1 range, convert to 0-255
+                            return (
+                                int(rendering.SurfaceColour.Red * 255),
+                                int(rendering.SurfaceColour.Green * 255),
+                                int(rendering.SurfaceColour.Blue * 255)
+                            )
+            except:
+                pass
+            return None
+        
         # Helper function to create shape (the slow part) - will run in parallel
         def create_shape_parallel(product):
             """Create geometry shape for a product - thread-safe."""
             try:
                 shape = ifcopenshell.geom.create_shape(settings, product)
-                return (product, shape, None)
+                # Also extract color while we're at it (in parallel)
+                ifc_color = get_ifc_color(product)
+                return (product, shape, ifc_color, None)
             except Exception as e:
                 # Try fallback
                 try:
@@ -1262,12 +1283,14 @@ def convert_ifc_to_gltf(ifc_path: Path, gltf_path: Path) -> bool:
                     alt_settings.set(alt_settings.USE_WORLD_COORDS, True)
                     alt_settings.set(alt_settings.WELD_VERTICES, False)
                     shape = ifcopenshell.geom.create_shape(alt_settings, product)
-                    return (product, shape, None)
+                    ifc_color = get_ifc_color(product)
+                    return (product, shape, ifc_color, None)
                 except Exception as e2:
-                    return (product, None, str(e2))
+                    return (product, None, None, str(e2))
         
         # Process geometry creation in parallel (the bottleneck!)
         print(f"[GLTF] Starting parallel geometry creation with {min(8, len(products))} workers...")
+        print(f"[GLTF] Extracting IFC colors in parallel for accurate visualization...")
         shapes_data = []
         with ThreadPoolExecutor(max_workers=8) as executor:
             futures = [executor.submit(create_shape_parallel, p) for p in products]
@@ -1292,8 +1315,9 @@ def convert_ifc_to_gltf(ifc_path: Path, gltf_path: Path) -> bool:
         mesh_start = time.time()
         failed_count = 0
         skipped_count = 0
+        ifc_colors_found = 0
         
-        for product, shape, error in shapes_data:
+        for product, shape, ifc_color, error in shapes_data:
             try:
                 element_type = product.is_a()
                 
@@ -1346,13 +1370,16 @@ def convert_ifc_to_gltf(ifc_path: Path, gltf_path: Path) -> bool:
                     skipped_count += 1
                     continue
                 
-                # OPTIMIZED: Fast color assignment using simple type-based colors
-                # This skips expensive IFC style parsing and geometry color extraction
+                # Get color: Use IFC color if available, otherwise fallback to type-based colors
                 is_fastener = is_fastener_like(product)
                 assembly_mark = get_assembly_mark(product)
                 
-                # Simple type-based colors (no expensive IFC parsing)
-                if is_fastener:
+                # Priority 1: Use actual IFC color if extracted
+                if ifc_color is not None:
+                    color_rgb = ifc_color
+                    ifc_colors_found += 1
+                # Priority 2: Fallback to type-based colors
+                elif is_fastener:
                     color_rgb = (139, 105, 20)  # Dark brown-gold for fasteners
                 else:
                     element_type = product.is_a()
@@ -1429,6 +1456,7 @@ def convert_ifc_to_gltf(ifc_path: Path, gltf_path: Path) -> bool:
                 continue
         
         print(f"[GLTF] Conversion summary: {len(meshes)} meshes created, {skipped_count} skipped, {failed_count} failed")
+        print(f"[GLTF] Color extraction: {ifc_colors_found}/{len(meshes)} elements used IFC colors, {len(meshes) - ifc_colors_found} used type-based fallback")
         print(f"[GLTF-TIMING] Mesh processing took {time.time() - mesh_start:.2f}s")
         print(f"[GLTF-TIMING] Total geometry+mesh time: {time.time() - geom_start:.2f}s")
         
