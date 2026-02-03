@@ -14,11 +14,6 @@ export default defineConfig({
       }
     }
   },
-  optimizeDeps: {
-    include: ['@thatopen/components', '@thatopen/fragments'],
-    exclude: ['web-ifc-three']
-  },
-  publicDir: 'public',
-  assetsInclude: ['**/*.wasm']
+  publicDir: 'public'
 })
 

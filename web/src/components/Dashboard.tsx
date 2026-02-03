@@ -1,5 +1,10 @@
 import { SteelReport } from '../types'
 
+interface DashboardProps {
+  filename: string | null
+  report: SteelReport | null
+}
+
 interface CardProps {
   title: string
   value: string | number
