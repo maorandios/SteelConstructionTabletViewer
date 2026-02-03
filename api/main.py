@@ -1373,10 +1373,13 @@ def convert_ifc_to_gltf(ifc_path: Path, gltf_path: Path) -> bool:
         print(f"[GLTF] Conversion summary: {len(meshes)} meshes created, {skipped_count} skipped, {failed_count} failed")
         print(f"[GLTF-TIMING] Mesh processing took {time.time() - mesh_start:.2f}s")
         
-        # Add simple placeholder geometry for fasteners (FAST - no conversion needed!)
-        if fastener_products:
+        # SKIP fastener placeholders for now - they take too long (8+ seconds for 2000+)
+        # TODO: Implement faster fastener visualization
+        if False and fastener_products:  # Disabled temporarily
             fastener_start = time.time()
             print(f"[GLTF] Creating simple placeholders for {len(fastener_products)} fasteners...")
+            
+            import ifcopenshell.util.placement
             
             for product in fastener_products:
                 try:
@@ -1385,9 +1388,8 @@ def convert_ifc_to_gltf(ifc_path: Path, gltf_path: Path) -> bool:
                         continue
                     
                     # Extract position from placement matrix
-                    import ifcopenshell.util.placement
                     matrix = ifcopenshell.util.placement.get_local_placement(product.ObjectPlacement)
-                    position = [matrix[0][3], matrix[1][3], matrix[2][3]]  # X, Y, Z from matrix
+                    position = [matrix[0][3], matrix[1][3], matrix[2][3]]
                     
                     # Determine fastener type and size from name
                     name = (getattr(product, 'Name', None) or '').upper()
