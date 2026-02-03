@@ -1140,7 +1140,7 @@ def convert_ifc_to_gltf(ifc_path: Path, gltf_path: Path) -> bool:
         failed_count = 0
         skipped_count = 0
         
-        # Get all products with geometry - SKIP non-geometric types for speed
+        # Get all products with geometry - SKIP non-geometric types AND fasteners for speed
         filter_start = time.time()
         all_products = ifc_file.by_type("IfcProduct")
         
@@ -1151,36 +1151,92 @@ def convert_ifc_to_gltf(ifc_path: Path, gltf_path: Path) -> bool:
             "IfcProxy", "IfcDistributionElement"
         }
         
-        products = [p for p in all_products if p.is_a() not in skip_types]
-        print(f"[GLTF] Found {len(all_products)} total products, filtered to {len(products)} (skipped {len(all_products) - len(products)} non-geometric)")
+        # OPTIMIZATION: Also skip fasteners (washers, nuts, bolts) - they're tiny and slow
+        # Check both type and name for Tekla-exported fasteners
+        def should_skip(p):
+            ptype = p.is_a()
+            if ptype in skip_types:
+                return True
+            # Skip IFC fastener entities
+            if ptype in {"IfcFastener", "IfcMechanicalFastener"}:
+                return True
+            # Skip Tekla fasteners exported as other types (by name)
+            try:
+                name = (getattr(p, 'Name', None) or '').upper()
+                if any(kw in name for kw in ['WASHER', 'NUT', 'BOLT', 'M16_', 'M20_', 'M24_']):
+                    return True
+            except:
+                pass
+            return False
+        
+        products = [p for p in all_products if not should_skip(p)]
+        print(f"[GLTF] Found {len(all_products)} total products, filtered to {len(products)} (skipped {len(all_products) - len(products)} non-geometric/fasteners)")
         print(f"[GLTF-TIMING] Filtering took {time.time() - filter_start:.2f}s")
         
+        # PARALLEL PROCESSING: Use ThreadPoolExecutor for geometry creation
+        from concurrent.futures import ThreadPoolExecutor
+        import threading
+        
         geom_start = time.time()
-        for product in products:
+        
+        # Thread-safe counters
+        lock = threading.Lock()
+        thread_failed = [0]
+        thread_skipped = [0]
+        
+        # Helper function to create shape (the slow part) - will run in parallel
+        def create_shape_parallel(product):
+            """Create geometry shape for a product - thread-safe."""
+            try:
+                shape = ifcopenshell.geom.create_shape(settings, product)
+                return (product, shape, None)
+            except Exception as e:
+                # Try fallback
+                try:
+                    alt_settings = ifcopenshell.geom.settings()
+                    alt_settings.set(alt_settings.USE_WORLD_COORDS, True)
+                    alt_settings.set(alt_settings.WELD_VERTICES, False)
+                    shape = ifcopenshell.geom.create_shape(alt_settings, product)
+                    return (product, shape, None)
+                except Exception as e2:
+                    return (product, None, str(e2))
+        
+        # Process geometry creation in parallel (the bottleneck!)
+        print(f"[GLTF] Starting parallel geometry creation with {min(8, len(products))} workers...")
+        shapes_data = []
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = [executor.submit(create_shape_parallel, p) for p in products]
+            for i, future in enumerate(futures):
+                if i % 200 == 0 and i > 0:
+                    print(f"[GLTF] Progress: {i}/{len(products)} products processed...")
+                try:
+                    result = future.result(timeout=10)  # 10 second timeout per product
+                    if result[1] is not None:  # Has shape
+                        shapes_data.append(result)
+                    else:
+                        with lock:
+                            thread_skipped[0] += 1
+                except Exception as e:
+                    with lock:
+                        thread_failed[0] += 1
+        
+        print(f"[GLTF-TIMING] Parallel geometry creation took {time.time() - geom_start:.2f}s")
+        print(f"[GLTF] Created {len(shapes_data)} shapes, {thread_skipped[0]} skipped, {thread_failed[0]} failed")
+        
+        # Now process the shapes into meshes (fast, sequential is fine)
+        mesh_start = time.time()
+        failed_count = 0
+        skipped_count = 0
+        
+        for product, shape, error in shapes_data:
             try:
                 element_type = product.is_a()
-                
-                # Try to create geometry - don't skip if Representation check fails
-                # Some IFC files have geometry in different structures
-                shape = None
-                try:
-                    shape = ifcopenshell.geom.create_shape(settings, product)
-                except Exception as shape_error:
-                    # If local coords fail, try world coords as fallback
-                    try:
-                        alt_settings = ifcopenshell.geom.settings()
-                        alt_settings.set(alt_settings.USE_WORLD_COORDS, True)
-                        alt_settings.set(alt_settings.WELD_VERTICES, False)  # Ultra-fast mode
-                        shape = ifcopenshell.geom.create_shape(alt_settings, product)
-                    except:
-                        skipped_count += 1
-                        continue
                 
                 if not shape:
                     skipped_count += 1
                     continue
                 
-                # Get geometry data
+                # Get geometry data (shape already created in parallel)
                 try:
                     verts = shape.geometry.verts
                     faces = shape.geometry.faces
@@ -1308,7 +1364,8 @@ def convert_ifc_to_gltf(ifc_path: Path, gltf_path: Path) -> bool:
                 continue
         
         print(f"[GLTF] Conversion summary: {len(meshes)} meshes created, {skipped_count} skipped, {failed_count} failed")
-        print(f"[GLTF-TIMING] Geometry processing took {time.time() - geom_start:.2f}s")
+        print(f"[GLTF-TIMING] Mesh processing took {time.time() - mesh_start:.2f}s")
+        print(f"[GLTF-TIMING] Total geometry+mesh time: {time.time() - geom_start:.2f}s")
         
         if not meshes:
             error_msg = f"No valid geometry found in IFC file. Processed {len(products)} products, {skipped_count} skipped, {failed_count} failed."
