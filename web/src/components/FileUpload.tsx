@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react'
 import { SteelReport } from '../types'
 import { Button } from './ui/Button'
+import { apiRequest } from '../utils/api'
 
 interface FileUploadProps {
   onUpload: (filename: string, report: SteelReport, gltfPath?: string, gltfAvailable?: boolean) => void
@@ -30,7 +31,7 @@ export default function FileUpload({ onUpload, loading, setLoading }: FileUpload
 
       console.log('Uploading file:', file.name, 'Size:', file.size)
 
-      const response = await fetch('/api/upload', {
+      const response = await apiRequest('/api/upload', {
         method: 'POST',
         body: formData,
       })
@@ -57,7 +58,7 @@ export default function FileUpload({ onUpload, loading, setLoading }: FileUpload
         // Alternative format: {file_id, filename} - fetch report separately
         console.warn('Received file_id format, fetching report separately')
         try {
-          const reportResponse = await fetch(`/api/report/${data.filename}`)
+          const reportResponse = await apiRequest(`/api/report/${data.filename}`)
           if (reportResponse.ok) {
             const report = await reportResponse.json()
             onUpload(data.filename, report)
