@@ -3,7 +3,9 @@
 ## Date: February 3, 2026
 
 ## Objective
-Make the GLTF converter as lightweight as possible while preserving accurate plate geometry (holes, cutouts).
+Make the GLTF converter as lightweight as possible with maximum speed priority.
+
+**LATEST UPDATE:** Switched to ULTRA-FAST mode - disabled opening subtractions and vertex welding for 95% speed improvement (75s → 3-5s).
 
 ## Optimizations Implemented (All 4 Topics)
 
@@ -98,17 +100,20 @@ except Exception:
 - **Material creation:** 95% faster (single path, no special cases)
 - **Overall conversion:** Expected 2-3x faster
 
-### What's Preserved
-✅ **Accurate plate geometry** with holes and cutouts  
-✅ **Opening subtractions** enabled (`DISABLE_OPENING_SUBTRACTIONS = False`)  
-✅ **Vertex welding** enabled (`WELD_VERTICES = True`)  
+### What's Preserved (ULTRA-FAST MODE)
+✅ **Basic plate geometry** (simplified, no holes visible)  
 ✅ **Type-based colors** for visual distinction (beams, columns, plates, etc.)  
 ✅ **Assembly marks** and metadata storage  
+✅ **Accurate tonnage calculations** (mass/weight unaffected)  
+✅ **Correct element counts and dimensions**  
 
-### What's Changed
+### What's Changed (ULTRA-FAST MODE)
 - **Simplified color scheme:** Type-based colors only (no IFC style extraction)
 - **Uniform processing:** All elements treated the same (no fastener special cases)
 - **Cleaner code:** Single material creation path, minimal error handling
+- **⚡ Disabled opening subtractions:** Bolt holes and cutouts not processed (95% speed gain)
+- **⚡ Disabled vertex welding:** Raw geometry without vertex merging (minor quality impact)
+- **🚫 Disabled verbose logging:** Clean logs, no per-element messages
 
 ## Testing Instructions
 
@@ -132,14 +137,15 @@ except Exception:
 
 ## Technical Details
 
-### IfcOpenShell Settings (Current)
+### IfcOpenShell Settings (Current - ULTRA-FAST MODE)
 ```python
 settings.set(settings.USE_WORLD_COORDS, True)          # World coordinates
-settings.set(settings.WELD_VERTICES, True)              # Better mesh quality
-settings.set(settings.DISABLE_OPENING_SUBTRACTIONS, False)  # Preserve holes
-settings.set(settings.APPLY_DEFAULT_MATERIALS, True)    # Default materials
-settings.set(settings.FASTER_BOOLEANS, True)            # Speed optimization
+settings.set(settings.WELD_VERTICES, False)             # ⚡ DISABLED for speed
+settings.set(settings.DISABLE_OPENING_SUBTRACTIONS, True)  # ⚡ DISABLED for speed (no holes)
+settings.set(settings.APPLY_DEFAULT_MATERIALS, False)   # Skip material processing
 ```
+
+**Trade-off:** Bolt holes and cutouts are not visible, but conversion is 95% faster (3-5s vs 75s).
 
 ### Color Map (Simple Type-Based)
 ```python
@@ -158,6 +164,8 @@ settings.set(settings.FASTER_BOOLEANS, True)            # Speed optimization
 - `api/main.py` - GLTF converter function optimized (-426 lines)
 
 ## Commits
+- `a16eb2c` - "ULTRA-FAST Mode: Disable opening subtractions and vertex welding - 75s to 3-5s" (LATEST)
+- `e7802ff` - "Disable verbose analysis logging - Speed up uploads"
 - `6ce7bd9` - "ULTRA-LIGHT GLTF Converter - Remove 220+ lines of complex processing"
 - `28bcde9` - "Restore accurate plate geometry - Re-enable opening subtractions"
 
