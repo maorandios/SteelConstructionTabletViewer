@@ -811,8 +811,10 @@ def analyze_ifc(file_path: Path) -> Dict[str, Any]:
 @app.post("/api/upload")
 async def upload_ifc(file: UploadFile = File(...)):
     """Upload an IFC file."""
+    import time
+    upload_start = time.time()
     print("=" * 60)
-    print("[UPLOAD] ===== UPLOAD ENDPOINT CALLED =====")
+    print(f"[UPLOAD] ===== UPLOAD ENDPOINT CALLED at {time.strftime('%H:%M:%S')} =====")
     print(f"[UPLOAD] File: {file.filename}")
     print("=" * 60)
     try:
@@ -845,8 +847,10 @@ async def upload_ifc(file: UploadFile = File(...)):
         
         # Analyze IFC
         print(f"[UPLOAD] About to call analyze_ifc for: {file_path}")
+        analyze_start = time.time()
         try:
             report = analyze_ifc(file_path)
+            print(f"[UPLOAD-TIMING] Analysis took {time.time() - analyze_start:.2f}s")
             print(f"[UPLOAD] analyze_ifc completed successfully. Report has {len(report.get('profiles', []))} profiles")
             
             # Save report
@@ -880,8 +884,10 @@ async def upload_ifc(file: UploadFile = File(...)):
             
             # Try conversion, but don't block upload if it fails
             try:
+                gltf_start = time.time()
                 print(f"[UPLOAD] Starting glTF conversion for {safe_filename}...")
                 convert_ifc_to_gltf(file_path, gltf_path)
+                print(f"[UPLOAD-TIMING] glTF conversion took {time.time() - gltf_start:.2f}s")
                 gltf_available = gltf_path.exists()
                 if gltf_available:
                     print(f"[UPLOAD] glTF conversion completed: {gltf_path}")
@@ -909,6 +915,7 @@ async def upload_ifc(file: UploadFile = File(...)):
             if conversion_error:
                 response_data["conversion_error"] = str(conversion_error)
             
+            print(f"[UPLOAD-TIMING] TOTAL upload time: {time.time() - upload_start:.2f}s")
             print(f"[UPLOAD] ===== UPLOAD COMPLETE =====")
             
             return JSONResponse(response_data)
@@ -1100,10 +1107,15 @@ def convert_ifc_to_gltf(ifc_path: Path, gltf_path: Path) -> bool:
         import ifcopenshell.geom
         import trimesh
         import numpy as np
+        import time
+        
+        start_time = time.time()
+        print(f"[GLTF-TIMING] Starting conversion at {time.strftime('%H:%M:%S')}")
         
         # Resolve path to absolute for Windows compatibility
         resolved_ifc_path = ifc_path.resolve()
         ifc_file = ifcopenshell.open(str(resolved_ifc_path))
+        print(f"[GLTF-TIMING] File opened in {time.time() - start_time:.2f}s")
         
         # Settings for geometry extraction - ULTRA-FAST: Maximum Speed
         settings = ifcopenshell.geom.settings()
@@ -1113,7 +1125,7 @@ def convert_ifc_to_gltf(ifc_path: Path, gltf_path: Path) -> bool:
         settings.set(settings.APPLY_DEFAULT_MATERIALS, False)  # Skip material processing (we use type-based colors)
         # Note: Opening subtractions disabled for maximum speed - geometry is simplified but accurate for tonnage
         
-        print(f"[GLTF] Using WORLD coordinates, preserving original IFC axis orientation")
+        print(f"[GLTF] Using WORLD coordinates, ULTRA-FAST mode (no openings, no welding)")
         
         # Simple color helpers
         def is_fastener_like(product):
@@ -1128,10 +1140,22 @@ def convert_ifc_to_gltf(ifc_path: Path, gltf_path: Path) -> bool:
         failed_count = 0
         skipped_count = 0
         
-        # Get all products with geometry
-        products = ifc_file.by_type("IfcProduct")
-        print(f"[GLTF] Found {len(products)} products in IFC file")
+        # Get all products with geometry - SKIP non-geometric types for speed
+        filter_start = time.time()
+        all_products = ifc_file.by_type("IfcProduct")
         
+        # Skip these types - they don't need geometry or are too slow
+        skip_types = {
+            "IfcGrid", "IfcGridAxis", "IfcAnnotation", "IfcOpeningElement",
+            "IfcSpace", "IfcSite", "IfcBuilding", "IfcBuildingStorey",
+            "IfcProxy", "IfcDistributionElement"
+        }
+        
+        products = [p for p in all_products if p.is_a() not in skip_types]
+        print(f"[GLTF] Found {len(all_products)} total products, filtered to {len(products)} (skipped {len(all_products) - len(products)} non-geometric)")
+        print(f"[GLTF-TIMING] Filtering took {time.time() - filter_start:.2f}s")
+        
+        geom_start = time.time()
         for product in products:
             try:
                 element_type = product.is_a()
@@ -1284,6 +1308,7 @@ def convert_ifc_to_gltf(ifc_path: Path, gltf_path: Path) -> bool:
                 continue
         
         print(f"[GLTF] Conversion summary: {len(meshes)} meshes created, {skipped_count} skipped, {failed_count} failed")
+        print(f"[GLTF-TIMING] Geometry processing took {time.time() - geom_start:.2f}s")
         
         if not meshes:
             error_msg = f"No valid geometry found in IFC file. Processed {len(products)} products, {skipped_count} skipped, {failed_count} failed."
@@ -1325,6 +1350,7 @@ def convert_ifc_to_gltf(ifc_path: Path, gltf_path: Path) -> bool:
             geometry_dict[mesh_name] = mesh
         
         print(f"[GLTF] Creating scene with {len(geometry_dict)} named meshes")
+        export_start = time.time()
         
         # Create a scene with the named geometry dictionary
         scene = trimesh.Scene(geometry_dict)
@@ -1337,6 +1363,8 @@ def convert_ifc_to_gltf(ifc_path: Path, gltf_path: Path) -> bool:
             raise Exception(f"glTF file was not created at {gltf_path}")
         
         print(f"Successfully exported glTF to {gltf_path}, size: {gltf_path.stat().st_size} bytes")
+        print(f"[GLTF-TIMING] Export took {time.time() - export_start:.2f}s")
+        print(f"[GLTF-TIMING] TOTAL conversion time: {time.time() - start_time:.2f}s")
         return True
     except Exception as e:
         print(f"Error in glTF conversion: {str(e)}")
