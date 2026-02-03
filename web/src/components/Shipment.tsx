@@ -7,6 +7,7 @@ import { ShipmentReportPDF } from './ShipmentReportPDF'
 interface ShipmentProps {
   filename: string
   report: SteelReport | null
+  cachedData?: any[]
 }
 
 interface AssemblyRow {
@@ -18,7 +19,7 @@ interface AssemblyRow {
   ids: number[]
 }
 
-export default function Shipment({ filename, report }: ShipmentProps) {
+export default function Shipment({ filename, report, cachedData }: ShipmentProps) {
   const [assemblies, setAssemblies] = useState<AssemblyRow[]>([])
   const [loading, setLoading] = useState(false)
   const [selectedAssemblies, setSelectedAssemblies] = useState<Set<string>>(new Set())
@@ -36,11 +37,15 @@ export default function Shipment({ filename, report }: ShipmentProps) {
   })
 
   // Fetch assembly data
+  // Use cached data if available, otherwise fetch
   useEffect(() => {
-    if (filename && report) {
+    if (cachedData) {
+      console.log('[Shipment] Using cached data:', cachedData.length, 'assemblies')
+      setAssemblies(cachedData)
+    } else if (filename && report) {
       fetchAssemblies()
     }
-  }, [filename, report])
+  }, [filename, report, cachedData])
 
   const fetchAssemblies = async () => {
     setLoading(true)

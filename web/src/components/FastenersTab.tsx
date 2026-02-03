@@ -7,6 +7,7 @@ import { FastenersReportPDF } from './FastenersReportPDF'
 interface FastenersTabProps {
   filename: string
   report: SteelReport | null
+  cachedData?: any[]
 }
 
 interface FastenerDetail {
@@ -20,7 +21,7 @@ interface FastenerDetail {
   ids: number[]
 }
 
-export default function FastenersTab({ filename, report }: FastenersTabProps) {
+export default function FastenersTab({ filename, report, cachedData }: FastenersTabProps) {
   const [fasteners, setFasteners] = useState<FastenerDetail[]>([])
   const [loading, setLoading] = useState(false)
   const [searchText, setSearchText] = useState('')
@@ -36,11 +37,15 @@ export default function FastenersTab({ filename, report }: FastenersTabProps) {
     title: ''
   })
 
+  // Use cached data if available, otherwise fetch
   useEffect(() => {
-    if (filename && report) {
+    if (cachedData) {
+      console.log('[FastenersTab] Using cached data:', cachedData.length, 'fasteners')
+      setFasteners(cachedData)
+    } else if (filename && report) {
       fetchFasteners()
     }
-  }, [filename, report])
+  }, [filename, report, cachedData])
 
   const fetchFasteners = async () => {
     setLoading(true)

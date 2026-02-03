@@ -5,6 +5,7 @@ import { PreviewModal } from './PreviewModal'
 interface ManagementProps {
   filename: string
   report: SteelReport | null
+  cachedData?: any[]
 }
 
 interface AssemblyRow {
@@ -18,7 +19,7 @@ interface AssemblyRow {
   shipped: boolean
 }
 
-export default function Management({ filename, report }: ManagementProps) {
+export default function Management({ filename, report, cachedData }: ManagementProps) {
   const [assemblies, setAssemblies] = useState<AssemblyRow[]>([])
   const [loading, setLoading] = useState(false)
   const [searchText, setSearchText] = useState('')
@@ -36,11 +37,15 @@ export default function Management({ filename, report }: ManagementProps) {
   })
 
   // Fetch assembly data
+  // Use cached data if available, otherwise fetch
   useEffect(() => {
-    if (filename && report) {
+    if (cachedData) {
+      console.log('[Management] Using cached data:', cachedData.length, 'assemblies')
+      setAssemblies(cachedData)
+    } else if (filename && report) {
       fetchAssemblies()
     }
-  }, [filename, report])
+  }, [filename, report, cachedData])
 
   const fetchAssemblies = async () => {
     setLoading(true)

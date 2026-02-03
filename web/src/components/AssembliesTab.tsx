@@ -5,6 +5,7 @@ import { PreviewModal } from './PreviewModal'
 interface AssembliesTabProps {
   filename: string
   report: SteelReport | null
+  cachedData?: any[]
 }
 
 interface AssemblyDetail {
@@ -23,7 +24,7 @@ interface AssemblyDetail {
   ids: number[]
 }
 
-export default function AssembliesTab({ filename, report }: AssembliesTabProps) {
+export default function AssembliesTab({ filename, report, cachedData }: AssembliesTabProps) {
   const [assemblies, setAssemblies] = useState<AssemblyDetail[]>([])
   const [loading, setLoading] = useState(false)
   const [expandedAssemblies, setExpandedAssemblies] = useState<Set<string>>(new Set())
@@ -40,11 +41,15 @@ export default function AssembliesTab({ filename, report }: AssembliesTabProps) 
     title: ''
   })
 
+  // Use cached data if available, otherwise fetch
   useEffect(() => {
-    if (filename && report) {
+    if (cachedData) {
+      console.log('[AssembliesTab] Using cached data:', cachedData.length, 'assemblies')
+      setAssemblies(cachedData)
+    } else if (filename && report) {
       fetchAssemblies()
     }
-  }, [filename, report])
+  }, [filename, report, cachedData])
 
   const fetchAssemblies = async () => {
     setLoading(true)

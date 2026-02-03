@@ -5,6 +5,7 @@ import { PreviewModal } from './PreviewModal'
 interface PlatesTabProps {
   filename: string
   report: SteelReport | null
+  cachedData?: any[]
 }
 
 interface PlateDetail {
@@ -20,7 +21,7 @@ interface PlateDetail {
   ids: number[]
 }
 
-export default function PlatesTab({ filename, report }: PlatesTabProps) {
+export default function PlatesTab({ filename, report, cachedData }: PlatesTabProps) {
   const [plates, setPlates] = useState<PlateDetail[]>([])
   const [loading, setLoading] = useState(false)
   const [searchText, setSearchText] = useState('')
@@ -36,11 +37,15 @@ export default function PlatesTab({ filename, report }: PlatesTabProps) {
     title: ''
   })
 
+  // Use cached data if available, otherwise fetch
   useEffect(() => {
-    if (filename && report) {
+    if (cachedData) {
+      console.log('[PlatesTab] Using cached data:', cachedData.length, 'plates')
+      setPlates(cachedData)
+    } else if (filename && report) {
       fetchPlates()
     }
-  }, [filename, report])
+  }, [filename, report, cachedData])
 
   const fetchPlates = async () => {
     setLoading(true)

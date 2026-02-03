@@ -7,6 +7,7 @@ import { BoltsReportPDF } from './BoltsReportPDF'
 interface BoltsTabProps {
   filename: string
   report: SteelReport | null
+  cachedData?: any[]
 }
 
 interface BoltDetail {
@@ -21,7 +22,7 @@ interface BoltDetail {
   ids: number[]
 }
 
-export default function BoltsTab({ filename, report }: BoltsTabProps) {
+export default function BoltsTab({ filename, report, cachedData }: BoltsTabProps) {
   const [bolts, setBolts] = useState<BoltDetail[]>([])
   const [loading, setLoading] = useState(false)
   const [searchText, setSearchText] = useState('')
@@ -37,11 +38,15 @@ export default function BoltsTab({ filename, report }: BoltsTabProps) {
     title: ''
   })
 
+  // Use cached data if available, otherwise fetch
   useEffect(() => {
-    if (filename && report) {
+    if (cachedData) {
+      console.log('[BoltsTab] Using cached data:', cachedData.length, 'bolts')
+      setBolts(cachedData)
+    } else if (filename && report) {
       fetchBolts()
     }
-  }, [filename, report])
+  }, [filename, report, cachedData])
 
   const fetchBolts = async () => {
     setLoading(true)

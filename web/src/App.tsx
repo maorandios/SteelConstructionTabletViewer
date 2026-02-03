@@ -57,6 +57,18 @@ function App() {
   })
   const [activeTab, setActiveTab] = useState<'model' | 'nesting' | 'dashboard' | 'profiles' | 'plates' | 'assemblies' | 'bolts' | 'fasteners' | 'plate-nesting' | 'shipment' | 'management'>(savedState?.activeTab || 'model')
   const [nestingReport, setNestingReport] = useState<NestingReportType | null>(null)  // Always start with null
+  
+  // Cache for tab data - loaded once and kept in memory
+  const [tabDataCache, setTabDataCache] = useState<{
+    profiles?: any[]
+    plates?: any[]
+    assemblies?: any[]
+    bolts?: any[]
+    fasteners?: any[]
+    shipment?: any[]
+    management?: any[]
+    dashboardDetails?: any
+  }>({})
 
   // Save to localStorage whenever state changes (but only save filters and activeTab, not file data)
   useEffect(() => {
@@ -92,10 +104,59 @@ function App() {
       assemblyMarks: new Set()
     })
     setActiveTab('dashboard')  // Reset to dashboard tab
+    
+    // Clear tab data cache when new file is uploaded
+    setTabDataCache({})
   }
 
   const handleNestingReportChange = (report: NestingReportType | null) => {
     setNestingReport(report)
+  }
+
+  // Preload all tab data when file is uploaded
+  useEffect(() => {
+    if (currentFile && report) {
+      preloadAllTabData()
+    }
+  }, [currentFile, report])
+
+  const preloadAllTabData = async () => {
+    console.log('[APP] Preloading all tab data for fast switching...')
+    const loadStart = Date.now()
+    
+    try {
+      // Load all endpoints in parallel
+      const [
+        dashboardResponse,
+        shipmentResponse,
+        managementResponse
+      ] = await Promise.all([
+        fetch(`/api/dashboard-details/${encodeURIComponent(currentFile!)}`),
+        fetch(`/api/shipment-assemblies/${encodeURIComponent(currentFile!)}`),
+        fetch(`/api/management-assemblies/${encodeURIComponent(currentFile!)}`)
+      ])
+
+      const [dashboardData, shipmentData, managementData] = await Promise.all([
+        dashboardResponse.ok ? dashboardResponse.json() : null,
+        shipmentResponse.ok ? shipmentResponse.json() : null,
+        managementResponse.ok ? managementResponse.json() : null
+      ])
+
+      setTabDataCache({
+        profiles: dashboardData?.profiles || [],
+        plates: dashboardData?.plates || [],
+        assemblies: dashboardData?.assemblies || [],
+        bolts: dashboardData?.bolts || [],
+        fasteners: dashboardData?.fasteners || [],
+        shipment: shipmentData?.assemblies || [],
+        management: managementData?.assemblies || [],
+        dashboardDetails: dashboardData
+      })
+
+      console.log(`[APP] All tab data preloaded in ${Date.now() - loadStart}ms`)
+    } catch (error) {
+      console.error('[APP] Error preloading tab data:', error)
+    }
   }
 
   return (
@@ -270,6 +331,7 @@ function App() {
                 <ProfilesTab 
                   filename={currentFile}
                   report={report}
+                  cachedData={tabDataCache.profiles}
                 />
               </div>
             )}
@@ -279,6 +341,7 @@ function App() {
                 <PlatesTab 
                   filename={currentFile}
                   report={report}
+                  cachedData={tabDataCache.plates}
                 />
               </div>
             )}
@@ -288,6 +351,7 @@ function App() {
                 <AssembliesTab 
                   filename={currentFile}
                   report={report}
+                  cachedData={tabDataCache.assemblies}
                 />
               </div>
             )}
@@ -297,6 +361,7 @@ function App() {
                 <BoltsTab 
                   filename={currentFile}
                   report={report}
+                  cachedData={tabDataCache.bolts}
                 />
               </div>
             )}
@@ -306,6 +371,7 @@ function App() {
                 <FastenersTab 
                   filename={currentFile}
                   report={report}
+                  cachedData={tabDataCache.fasteners}
                 />
               </div>
             )}
@@ -335,6 +401,7 @@ function App() {
                 <Shipment 
                   filename={currentFile}
                   report={report}
+                  cachedData={tabDataCache.shipment}
                 />
               </div>
             )}
@@ -344,6 +411,7 @@ function App() {
                 <Management 
                   filename={currentFile}
                   report={report}
+                  cachedData={tabDataCache.management}
                 />
               </div>
             )}

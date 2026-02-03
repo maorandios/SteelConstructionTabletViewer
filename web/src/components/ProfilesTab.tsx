@@ -5,6 +5,7 @@ import { PreviewModal } from './PreviewModal'
 interface ProfilesTabProps {
   filename: string
   report: SteelReport | null
+  cachedData?: any[]
 }
 
 interface ProfileDetail {
@@ -18,7 +19,7 @@ interface ProfileDetail {
   ids: number[]
 }
 
-export default function ProfilesTab({ filename, report }: ProfilesTabProps) {
+export default function ProfilesTab({ filename, report, cachedData }: ProfilesTabProps) {
   const [profiles, setProfiles] = useState<ProfileDetail[]>([])
   const [loading, setLoading] = useState(false)
   const [searchText, setSearchText] = useState('')
@@ -34,11 +35,15 @@ export default function ProfilesTab({ filename, report }: ProfilesTabProps) {
     title: ''
   })
 
+  // Use cached data if available, otherwise fetch
   useEffect(() => {
-    if (filename && report) {
+    if (cachedData) {
+      console.log('[ProfilesTab] Using cached data:', cachedData.length, 'profiles')
+      setProfiles(cachedData)
+    } else if (filename && report) {
       fetchProfiles()
     }
-  }, [filename, report])
+  }, [filename, report, cachedData])
 
   const fetchProfiles = async () => {
     setLoading(true)
