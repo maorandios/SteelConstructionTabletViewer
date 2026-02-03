@@ -826,12 +826,57 @@ async def upload_ifc(file: UploadFile = File(...)):
         print(f"[UPLOAD] Received upload request: {file.filename} -> sanitized to: {safe_filename}")
         
         file_path = IFC_DIR / safe_filename
+        report_path = REPORTS_DIR / f"{safe_filename}.json"
+        gltf_filename = f"{Path(safe_filename).stem}.glb"
+        gltf_path = GLTF_DIR / gltf_filename
         
-        # Save file
+        # Read file content
         content = await file.read()
         if len(content) == 0:
             raise HTTPException(status_code=400, detail="File is empty")
         
+        # ===== CACHE CHECK: Skip processing if file exists with same size =====
+        use_cache = False
+        if file_path.exists() and report_path.exists() and gltf_path.exists():
+            existing_size = file_path.stat().st_size
+            if existing_size == len(content):
+                print(f"[UPLOAD-CACHE] ✅ CACHE HIT! File already processed: {safe_filename}")
+                print(f"[UPLOAD-CACHE] File size: {existing_size} bytes (matches upload)")
+                print(f"[UPLOAD-CACHE] Loading cached report from: {report_path}")
+                print(f"[UPLOAD-CACHE] Using cached GLTF from: {gltf_path}")
+                use_cache = True
+            else:
+                print(f"[UPLOAD-CACHE] ⚠️ File exists but size differs (old: {existing_size}, new: {len(content)})")
+                print(f"[UPLOAD-CACHE] Will reprocess...")
+        else:
+            missing = []
+            if not file_path.exists():
+                missing.append("IFC file")
+            if not report_path.exists():
+                missing.append("report")
+            if not gltf_path.exists():
+                missing.append("GLTF")
+            print(f"[UPLOAD-CACHE] ❌ CACHE MISS - Missing: {', '.join(missing)}")
+        
+        if use_cache:
+            # Load cached report
+            with open(report_path, "r", encoding='utf-8') as f:
+                report = json.load(f)
+            
+            response_data = {
+                "filename": safe_filename,
+                "original_filename": file.filename,
+                "report": report,
+                "gltf_available": True,
+                "gltf_path": f"/api/gltf/{gltf_filename}",
+                "from_cache": True
+            }
+            
+            print(f"[UPLOAD-CACHE] ✅ Returned cached data in {time.time() - upload_start:.2f}s")
+            print(f"[UPLOAD] ===== UPLOAD COMPLETE (FROM CACHE) =====")
+            return JSONResponse(response_data)
+        
+        # ===== NOT CACHED: Process the file =====
         print(f"[UPLOAD] About to write file: {file_path}")
         print(f"[UPLOAD] File path type: {type(file_path)}, exists: {file_path.parent.exists()}")
         try:
@@ -868,19 +913,8 @@ async def upload_ifc(file: UploadFile = File(...)):
                 raise
             
             # Convert to glTF synchronously (for now, to catch errors)
-            gltf_filename = f"{Path(safe_filename).stem}.glb"
-            gltf_path = GLTF_DIR / gltf_filename
-            
             gltf_available = False
             conversion_error = None
-            
-            # Always force regeneration: delete existing glb if present
-            if gltf_path.exists():
-                try:
-                    gltf_path.unlink()
-                    print(f"[UPLOAD] Existing glTF removed to force regeneration: {gltf_path}")
-                except Exception as e:
-                    print(f"[UPLOAD] Warning: could not delete existing glTF {gltf_path}: {e}")
             
             # Try conversion, but don't block upload if it fails
             try:
@@ -911,6 +945,7 @@ async def upload_ifc(file: UploadFile = File(...)):
                 "report": report,
                 "gltf_available": bool(gltf_available),  # Ensure it's always a boolean
                 "gltf_path": f"/api/gltf/{gltf_filename}",  # Always include this
+                "from_cache": False  # This was freshly processed
             }
             if conversion_error:
                 response_data["conversion_error"] = str(conversion_error)
