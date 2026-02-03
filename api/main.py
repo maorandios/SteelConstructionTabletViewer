@@ -726,9 +726,9 @@ def analyze_ifc(file_path: Path) -> Dict[str, Any]:
                 # Use profile_name as key to merge all types with same profile
                 profile_key = profile_name
                 
-                # Debug: Log ALL profile extractions to see what's happening
-                if profile_name:
-                    print(f"[ANALYZE] Element {element.id()}: type={element_type}, profile_name='{profile_name}', profile_key='{profile_key}', existing_keys={list(profiles.keys())}")
+                # Debug: Log ALL profile extractions to see what's happening (disabled for performance)
+                # if profile_name:
+                #     print(f"[ANALYZE] Element {element.id()}: type={element_type}, profile_name='{profile_name}', profile_key='{profile_key}', existing_keys={list(profiles.keys())}")
                 
                 if not profile_key:
                     # Skip elements without profile names
@@ -742,23 +742,25 @@ def analyze_ifc(file_path: Path) -> Dict[str, Any]:
                         "piece_count": 0,
                         "total_weight": 0.0
                     }
-                    print(f"[ANALYZE] Created new profile group: '{profile_name}' (type: {profiles[profile_key]['element_type']})")
+                    # print(f"[ANALYZE] Created new profile group: '{profile_name}' (type: {profiles[profile_key]['element_type']})")
                 else:
                     # Profile already exists - check if we're merging different types
                     existing_type = profiles[profile_key].get("element_type")
                     current_type = element_type.replace("Ifc", "").lower()
                     
-                    print(f"[ANALYZE] Profile '{profile_name}' already exists (type: {existing_type}), current element type: {current_type}")
+                    # print(f"[ANALYZE] Profile '{profile_name}' already exists (type: {existing_type}), current element type: {current_type}")
                     
                     if existing_type != current_type:
                         # Different element type - mark as merged
                         if existing_type != "mixed":
-                            print(f"[ANALYZE] *** MERGING {element_type} into existing profile '{profile_name}' (was {existing_type}, now mixed) ***")
+                            # print(f"[ANALYZE] *** MERGING {element_type} into existing profile '{profile_name}' (was {existing_type}, now mixed) ***")
                             profiles[profile_key]["element_type"] = "mixed"
                         else:
-                            print(f"[ANALYZE] Adding {element_type} to already-mixed profile '{profile_name}'")
+                            # print(f"[ANALYZE] Adding {element_type} to already-mixed profile '{profile_name}'")
+                            pass  # Logging disabled
                     else:
-                        print(f"[ANALYZE] Same type ({current_type}), just incrementing count")
+                        # print(f"[ANALYZE] Same type ({current_type}), just incrementing count")
+                        pass  # Logging disabled
                 
                 profiles[profile_key]["piece_count"] += 1
                 profiles[profile_key]["total_weight"] += weight
@@ -768,9 +770,9 @@ def analyze_ifc(file_path: Path) -> Dict[str, Any]:
                 thickness = get_plate_thickness(element)
                 plate_key = f"{thickness}"
                 
-                # Debug: Log first few plate thickness extractions
-                if len(plates) < 5:
-                    print(f"[ANALYZE] Element {element.id()}: type={element_type}, thickness={thickness}")
+                # Debug: Log first few plate thickness extractions (disabled for performance)
+                # if len(plates) < 5:
+                #     print(f"[ANALYZE] Element {element.id()}: type={element_type}, thickness={thickness}")
                 
                 if plate_key not in plates:
                     plates[plate_key] = {
