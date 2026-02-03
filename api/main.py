@@ -1454,8 +1454,9 @@ def convert_ifc_to_gltf(ifc_path: Path, gltf_path: Path) -> bool:
                             pass
                         mesh.visual.material = material
                         
-                        # Skip per-vertex/per-face color processing for speed
-                        if False:
+                        # Skip per-vertex/per-face color processing for speed (disabled for performance)
+                        # This entire block is disabled - we use simple type-based colors
+                        if False:  # noqa: SIM102
                             try:
                                 color_array = np.array(colors)
                                 # Case 1: per-face colors
@@ -1503,15 +1504,9 @@ def convert_ifc_to_gltf(ifc_path: Path, gltf_path: Path) -> bool:
                                     mesh.visual.vertex_colors = np.tile(color_normalized + [1.0], (len(mesh.vertices), 1))
                                 else:
                                     print(f"[GLTF] Skipping vertex colors in exception handler for fastener product {product.id()} - using material color only")
-                        else:
-                            # Use uniform color for all vertices
-                            # For fasteners, DON'T set vertex colors - let material color show through
-                            if is_fastener:
-                                # Don't set vertex colors for fasteners - material color will be used
-                                # This prevents black vertex colors from overriding the gold material
-                                print(f"[GLTF] Skipping vertex colors for fastener product {product.id()} - using material color only")
-                            else:
-                                mesh.visual.vertex_colors = np.tile(color_normalized + [1.0], (len(mesh.vertices), 1))
+                        # For non-fasteners, set uniform vertex colors
+                        if not is_fastener:
+                            mesh.visual.vertex_colors = np.tile(color_normalized + [1.0], (len(mesh.vertices), 1))
                     except Exception as e:
                         # Fallback: use simple material with color
                         print(f"[GLTF] Warning: Could not set PBR material for product {product.id()}, using SimpleMaterial: {e}")
