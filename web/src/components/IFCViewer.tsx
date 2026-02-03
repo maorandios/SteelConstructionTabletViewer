@@ -185,19 +185,18 @@ export default function IFCViewer({ filename, gltfPath, gltfAvailable = false, e
       return
     }
 
-    // Skip dimension check if component is hidden but mounted (isVisible=false or CSS hidden)
-    // This allows the 3D scene to initialize even when tab is not active
-    const isHidden = !isVisible || containerRef.current.clientWidth === 0
-    if (isHidden && !sceneRef.current) {
+    // Check if component should initialize based on isVisible prop
+    // Don't check clientWidth - CSS hidden class makes it 0 even when tab is active
+    if (!isVisible && !sceneRef.current) {
       // Don't initialize if hidden AND not yet initialized
-      console.log('[IFCViewer] Component hidden, deferring initialization until visible')
+      console.log('[IFCViewer] Component hidden (isVisible=false), deferring initialization until visible')
       setLoadError(null)
       setIsLoading(false)
       return
     }
     
     // If already initialized but hidden, that's fine - keep the scene alive
-    if (isHidden && sceneRef.current) {
+    if (!isVisible && sceneRef.current) {
       console.log('[IFCViewer] Component hidden but scene exists, keeping alive')
       return
     }

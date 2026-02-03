@@ -271,6 +271,7 @@ function App() {
                   enableClipping={true}
                   filters={filters}
                   report={report}
+                  isVisible={activeTab === 'model'}
                 />
               </div>
               <div className="w-96 overflow-y-auto">
