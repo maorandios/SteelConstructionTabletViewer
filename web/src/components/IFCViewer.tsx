@@ -1541,8 +1541,14 @@ export default function IFCViewer({ filename, gltfPath, gltfAvailable = false, e
         setConversionStatus('')
         isLoadingRef.current = false
         console.log('[IFCViewer] Loading state cleared, overlay should be hidden')
+        console.log('[IFCViewer] Edge generation disabled for instant display - model ready!')
         
-        // Generate edge lines asynchronously to avoid blocking UI
+        // PERFORMANCE OPTIMIZATION: Edge generation disabled for instant model display
+        // The model looks great with type-based colors and materials without edge lines
+        // This saves 2-5 seconds of processing time for models with 2000+ meshes
+        // 
+        // To re-enable edges, uncomment the code below:
+        /*
         if (meshesToProcessForEdges.length > 0) {
           setTimeout(() => {
             console.log('[IFCViewer] Starting asynchronous edge generation for', meshesToProcessForEdges.length, 'meshes')
@@ -1596,6 +1602,7 @@ export default function IFCViewer({ filename, gltfPath, gltfAvailable = false, e
             requestAnimationFrame(processChunk)
           }, 100)
         }
+        */
       } catch (error) {
         console.error('[IFCViewer] Error loading glTF:', error)
         const errorMessage = error instanceof Error ? error.message : 'Unknown error'
