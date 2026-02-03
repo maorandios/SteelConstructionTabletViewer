@@ -1151,33 +1151,17 @@ def convert_ifc_to_gltf(ifc_path: Path, gltf_path: Path) -> bool:
             "IfcProxy", "IfcDistributionElement"
         }
         
-        # Separate fasteners for simplified representation
-        def is_fastener(p):
-            ptype = p.is_a()
-            if ptype in {"IfcFastener", "IfcMechanicalFastener"}:
-                return True
-            try:
-                name = (getattr(p, 'Name', None) or '').upper()
-                if any(kw in name for kw in ['WASHER', 'NUT', 'BOLT', 'M16_', 'M20_', 'M24_']):
-                    return True
-            except:
-                pass
-            return False
-        
-        # Split products into regular and fasteners
-        regular_products = []
-        fastener_products = []
-        for p in all_products:
+        # Filter only truly non-geometric types - INCLUDE fasteners/bolts so they're visible!
+        def should_skip(p):
             ptype = p.is_a()
             if ptype in skip_types:
-                continue  # Skip non-geometric types
-            elif is_fastener(p):
-                fastener_products.append(p)
-            else:
-                regular_products.append(p)
+                return True
+            # DON'T skip fasteners - we want them visible!
+            return False
         
-        products = regular_products  # Process regular products normally
-        print(f"[GLTF] Found {len(all_products)} total products: {len(products)} regular, {len(fastener_products)} fasteners (simple), {len(all_products) - len(products) - len(fastener_products)} skipped")
+        products = [p for p in all_products if not should_skip(p)]
+        print(f"[GLTF] Found {len(all_products)} total products, filtered to {len(products)} (skipped {len(all_products) - len(products)} non-geometric types)")
+        print(f"[GLTF] NOTE: Including all fasteners/bolts in conversion for visibility")
         print(f"[GLTF-TIMING] Filtering took {time.time() - filter_start:.2f}s")
         
         # PARALLEL PROCESSING: Use ThreadPoolExecutor for geometry creation
@@ -1372,83 +1356,7 @@ def convert_ifc_to_gltf(ifc_path: Path, gltf_path: Path) -> bool:
         
         print(f"[GLTF] Conversion summary: {len(meshes)} meshes created, {skipped_count} skipped, {failed_count} failed")
         print(f"[GLTF-TIMING] Mesh processing took {time.time() - mesh_start:.2f}s")
-        
-        # SKIP fastener placeholders for now - they take too long (8+ seconds for 2000+)
-        # TODO: Implement faster fastener visualization
-        if False and fastener_products:  # Disabled temporarily
-            fastener_start = time.time()
-            print(f"[GLTF] Creating simple placeholders for {len(fastener_products)} fasteners...")
-            
-            import ifcopenshell.util.placement
-            
-            for product in fastener_products:
-                try:
-                    # Get fastener location from placement
-                    if not hasattr(product, 'ObjectPlacement') or not product.ObjectPlacement:
-                        continue
-                    
-                    # Extract position from placement matrix
-                    matrix = ifcopenshell.util.placement.get_local_placement(product.ObjectPlacement)
-                    position = [matrix[0][3], matrix[1][3], matrix[2][3]]
-                    
-                    # Determine fastener type and size from name
-                    name = (getattr(product, 'Name', None) or '').upper()
-                    if 'WASHER' in name:
-                        # Flat cylinder for washer
-                        radius = 0.015  # 15mm radius
-                        height = 0.003  # 3mm thick
-                        mesh = trimesh.creation.cylinder(radius=radius, height=height, sections=8)
-                    elif 'NUT' in name:
-                        # Hexagonal cylinder for nut
-                        radius = 0.012  # 12mm radius
-                        height = 0.008  # 8mm thick
-                        mesh = trimesh.creation.cylinder(radius=radius, height=height, sections=6)  # 6 sides = hex
-                    elif 'ROD' in name or 'BOLT' in name:
-                        # Thin cylinder for rod/bolt
-                        radius = 0.008  # 8mm radius
-                        height = 0.050  # 50mm long
-                        mesh = trimesh.creation.cylinder(radius=radius, height=height, sections=8)
-                    else:
-                        # Default: small sphere
-                        radius = 0.010  # 10mm radius
-                        mesh = trimesh.creation.icosphere(radius=radius, subdivisions=1)
-                    
-                    # Move to correct position
-                    mesh.apply_translation(position)
-                    
-                    # Add brown-gold color for fasteners
-                    color_normalized = [139/255.0, 105/255.0, 20/255.0, 1.0]
-                    material = trimesh.visual.material.PBRMaterial(
-                        baseColorFactor=color_normalized,
-                        metallicFactor=0.7,
-                        roughnessFactor=0.3,
-                        doubleSided=True
-                    )
-                    material.name = "Fastener_Simplified"
-                    mesh.visual.material = material
-                    mesh.visual.vertex_colors = np.tile(color_normalized, (len(mesh.vertices), 1))
-                    
-                    # Add metadata
-                    assembly_mark = get_assembly_mark(product)
-                    if not hasattr(mesh, 'metadata'):
-                        mesh.metadata = {}
-                    mesh.metadata['product_id'] = product.id()
-                    mesh.metadata['assembly_mark'] = assembly_mark
-                    mesh.metadata['element_type'] = product.is_a()
-                    mesh.metadata['simplified'] = True  # Mark as simplified
-                    
-                    meshes.append(mesh)
-                    product_ids.append(product.id())
-                    assembly_marks.append(assembly_mark)
-                    
-                except Exception as e:
-                    # Skip fasteners that fail
-                    continue
-            
-            print(f"[GLTF-TIMING] Fastener placeholders created in {time.time() - fastener_start:.2f}s")
-        
         print(f"[GLTF-TIMING] Total geometry+mesh time: {time.time() - geom_start:.2f}s")
-        print(f"[GLTF] Final mesh count: {len(meshes)} (including {len(fastener_products)} simplified fasteners)")
         
         if not meshes:
             error_msg = f"No valid geometry found in IFC file. Processed {len(products)} products, {skipped_count} skipped, {failed_count} failed."
